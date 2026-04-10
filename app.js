@@ -5,6 +5,19 @@
 (function () {
   'use strict';
 
+  // ---- Debug Log (on-screen) ----
+  const debugEl = document.createElement('div');
+  debugEl.id = 'debugLog';
+  debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow-y:auto;background:rgba(0,0,0,0.92);color:#0f0;font:11px/1.5 monospace;padding:8px 10px;z-index:9999;white-space:pre-wrap;display:none;';
+  document.body.appendChild(debugEl);
+  function dlog(msg) {
+    debugEl.style.display = 'block';
+    const time = new Date().toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    debugEl.textContent += `[${time}] ${msg}\n`;
+    debugEl.scrollTop = debugEl.scrollHeight;
+    console.log(msg);
+  }
+
   // ---- State ----
   const state = {
     allSongs: [],          // [{ name, file, folder, artUrl, artist, duration, durationStr }]
@@ -237,22 +250,39 @@
   // Folder Loading
   // ============================================================
   async function loadFolder() {
+    dlog('loadFolder() called');
     let rootHandle = null;
     let filesFromInput = null;
 
     if (window.showDirectoryPicker) {
+      dlog('Using showDirectoryPicker (native API)');
       try {
         rootHandle = await window.showDirectoryPicker({ mode: 'read' });
+        dlog('Directory handle obtained');
       } catch (e) {
-        return; // user cancelled
+        dlog('showDirectoryPicker cancelled/error: ' + e.message);
+        return;
       }
     } else {
+      dlog('showDirectoryPicker not available, using <input> fallback');
       // Fallback: input element
       filesFromInput = await new Promise(resolve => {
-        folderInput.onchange = () => resolve(folderInput.files);
+        folderInput.onchange = () => {
+          dlog('onchange fired, files: ' + folderInput.files.length);
+          resolve(folderInput.files);
+        };
         folderInput.click();
+        dlog('folderInput.click() called, waiting for user selection...');
       });
-      if (!filesFromInput || filesFromInput.length === 0) return;
+      if (!filesFromInput || filesFromInput.length === 0) {
+        dlog('No files selected, aborting');
+        return;
+      }
+      dlog('Files received: ' + filesFromInput.length);
+      // Log first few paths
+      for (let i = 0; i < Math.min(5, filesFromInput.length); i++) {
+        dlog('  path[' + i + ']: ' + filesFromInput[i].webkitRelativePath);
+      }
     }
 
     showLoading('Loading music...');
@@ -265,13 +295,17 @@
 
     try {
       if (rootHandle) {
+        dlog('Starting loadFromDirectoryHandle...');
         await loadFromDirectoryHandle(rootHandle);
       } else {
+        dlog('Starting loadFromFileList...');
         await loadFromFileList(filesFromInput);
       }
     } catch (e) {
-      console.error('Error loading folder:', e);
+      dlog('ERROR during loading: ' + e.message + '\n' + e.stack);
     }
+
+    dlog('Loading done. Songs: ' + state.allSongs.length + ', Playlists: ' + state.autoPlaylists.length);
 
     state.allSongs.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     state.autoPlaylists.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
@@ -281,6 +315,7 @@
     app.classList.remove('hidden');
     renderSongList();
     renderPlaylists();
+    dlog('UI rendered. Visible songs: ' + state.allSongs.length);
 
     // Load durations in background (non-blocking)
     loadDurationsInBackground();
@@ -332,12 +367,28 @@
 
   async function loadFromFileList(files) {
     const folders = new Map(); // folderName -> { songs, coverUrl, coverFile }
+    let skippedCount = 0;
+    let processedCount = 0;
+
+    dlog('loadFromFileList: total files = ' + files.length);
 
     for (const file of files) {
       const parts = file.webkitRelativePath.split('/');
-      if (parts.length !== 3) continue; // must be root/folder/file
-      const folderName = parts[1];
-      const fileName = parts[2];
+      if (parts.length < 2) { skippedCount++; continue; }
+      // Support both root/file.mp3 (2 levels) and root/folder/file.mp3 (3 levels)
+      let folderName, fileName;
+      if (parts.length === 2) {
+        folderName = '(root)';
+        fileName = parts[1];
+      } else if (parts.length === 3) {
+        folderName = parts[1];
+        fileName = parts[2];
+      } else {
+        // Deeper nesting: use the first subfolder as the group
+        folderName = parts[1];
+        fileName = parts[parts.length - 1];
+      }
+      processedCount++;
 
       if (!folders.has(folderName)) {
         folders.set(folderName, { songs: [], coverUrl: null });
@@ -356,6 +407,9 @@
         state.allSongs.push(song);
       }
     }
+
+    dlog('File scan done. processed=' + processedCount + ' skipped=' + skippedCount + ' songs=' + state.allSongs.length);
+    dlog('Folders found: ' + [...folders.keys()].join(', '));
 
     for (const [name, folder] of folders) {
       if (folder.coverUrl) {
@@ -1120,10 +1174,19 @@
   // Init
   // ============================================================
   async function init() {
-    await openDB();
-    await loadManualPlaylists();
-    await loadSettings();
-    setupEvents();
+    dlog('init() start');
+    dlog('UA: ' + navigator.userAgent);
+    dlog('showDirectoryPicker: ' + !!window.showDirectoryPicker);
+    try {
+      await openDB();
+      dlog('IndexedDB opened');
+      await loadManualPlaylists();
+      await loadSettings();
+      setupEvents();
+      dlog('init() done, ready');
+    } catch (e) {
+      dlog('init ERROR: ' + e.message);
+    }
 
     // Register Service Worker
     if ('serviceWorker' in navigator) {
