@@ -5,18 +5,8 @@
 (function () {
   'use strict';
 
-  // ---- Debug Log (on-screen) ----
-  const debugEl = document.createElement('div');
-  debugEl.id = 'debugLog';
-  debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow-y:auto;background:rgba(0,0,0,0.92);color:#0f0;font:11px/1.5 monospace;padding:8px 10px;z-index:9999;white-space:pre-wrap;display:none;';
-  document.body.appendChild(debugEl);
-  function dlog(msg) {
-    debugEl.style.display = 'block';
-    const time = new Date().toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    debugEl.textContent += `[${time}] ${msg}\n`;
-    debugEl.scrollTop = debugEl.scrollHeight;
-    console.log(msg);
-  }
+  // ---- Debug (console only) ----
+  function dlog(msg) { console.log('[SoloPlayer]', msg); }
 
   // ---- State ----
   const state = {
