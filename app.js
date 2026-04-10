@@ -483,10 +483,19 @@
         const id3 = await parseID3(song.file);
         if (id3.artBlob && !song.artUrl) {
           song.artUrl = URL.createObjectURL(id3.artBlob);
-          const artEl = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-art`);
-          const placeholderEl = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-art-placeholder`);
-          if (artEl) { artEl.src = song.artUrl; artEl.classList.remove('hidden'); }
-          if (placeholderEl) placeholderEl.remove();
+          const songEl = document.querySelector(`[data-key="${CSS.escape(song.key)}"]`);
+          if (songEl) {
+            const placeholderEl = songEl.querySelector('.song-art-placeholder');
+            if (placeholderEl) {
+              // Replace placeholder with actual image
+              const img = document.createElement('img');
+              img.className = 'song-art';
+              img.src = song.artUrl;
+              img.alt = '';
+              img.loading = 'lazy';
+              placeholderEl.replaceWith(img);
+            }
+          }
         }
         if (id3.artist) song.artist = id3.artist;
       } catch (e) { /* skip */ }
