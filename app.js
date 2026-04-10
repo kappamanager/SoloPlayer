@@ -256,15 +256,21 @@
     }
 
     showLoading('Loading music...');
+    // Yield to let the browser render the loading overlay
+    await sleep(50);
 
     state.allSongs = [];
     state.autoPlaylists = [];
     state.folderHandles.clear();
 
-    if (rootHandle) {
-      await loadFromDirectoryHandle(rootHandle);
-    } else {
-      await loadFromFileList(filesFromInput);
+    try {
+      if (rootHandle) {
+        await loadFromDirectoryHandle(rootHandle);
+      } else {
+        await loadFromFileList(filesFromInput);
+      }
+    } catch (e) {
+      console.error('Error loading folder:', e);
     }
 
     state.allSongs.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
@@ -275,6 +281,13 @@
     app.classList.remove('hidden');
     renderSongList();
     renderPlaylists();
+
+    // Load durations in background (non-blocking)
+    loadDurationsInBackground();
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   async function loadFromDirectoryHandle(rootHandle) {
@@ -357,22 +370,51 @@
     }
   }
 
+  let songCounter = 0;
+
   async function buildSongEntry(file, folder) {
-    const id3 = await parseID3(file);
-    const artUrl = id3.artBlob ? URL.createObjectURL(id3.artBlob) : null;
+    // Parse ID3 only every 20 files yield to keep UI responsive
+    songCounter++;
+    if (songCounter % 20 === 0) {
+      updateLoadingText(`Loading music... (${songCounter} files)`);
+      await sleep(0);
+    }
+
+    let artUrl = null;
+    let artist = null;
+    try {
+      const id3 = await parseID3(file);
+      artUrl = id3.artBlob ? URL.createObjectURL(id3.artBlob) : null;
+      artist = id3.artist || null;
+    } catch (e) { /* skip ID3 errors */ }
+
     const name = file.name.replace(/\.(mp3|wav)$/i, '');
-    const durationStr = await getAudioDuration(file);
 
     return {
       name,
       file,
       folder,
       artUrl,
-      artist: id3.artist || null,
+      artist,
       duration: 0,
-      durationStr,
+      durationStr: '--:--',
       key: folder + '/' + file.name,
     };
+  }
+
+  // Load durations lazily in the background after initial render
+  async function loadDurationsInBackground() {
+    for (let i = 0; i < state.allSongs.length; i++) {
+      const song = state.allSongs[i];
+      try {
+        song.durationStr = await getAudioDuration(song.file);
+        // Update visible element if exists
+        const el = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-duration`);
+        if (el) el.textContent = song.durationStr;
+      } catch (e) { /* skip */ }
+      // Yield every 5 songs to keep UI responsive
+      if (i % 5 === 0) await sleep(0);
+    }
   }
 
   function getAudioDuration(file) {
@@ -390,6 +432,11 @@
         URL.revokeObjectURL(url);
         resolve('--:--');
       };
+      // Timeout: if metadata doesn't load in 5s, skip
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        resolve('--:--');
+      }, 5000);
     });
   }
 
@@ -783,6 +830,12 @@
   }
   function hideLoading() {
     if (loadingEl) { loadingEl.remove(); loadingEl = null; }
+  }
+  function updateLoadingText(text) {
+    if (loadingEl) {
+      const el = loadingEl.querySelector('.loading-text');
+      if (el) el.textContent = text;
+    }
   }
 
   // ============================================================

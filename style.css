@@ -51,7 +51,13 @@ html, body {
 }
 .landing-sub {
   color: var(--text-sub); font-size: 13px;
-  margin: 4px 0 32px; letter-spacing: 2px; text-transform: uppercase;
+  margin: 4px 0 12px; letter-spacing: 2px; text-transform: uppercase;
+}
+.landing-notice {
+  color: var(--text-sub); font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 24px;
+  opacity: 0.7;
 }
 .btn-select-folder {
   display: inline-flex; align-items: center; gap: 10px;
