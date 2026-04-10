@@ -402,9 +402,26 @@
       }
 
       if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
-        const song = await buildSongEntry(file, folderName);
+        // Fast entry: skip ID3 parsing during initial load
+        const name = fileName.replace(/\.(mp3|wav)$/i, '');
+        const song = {
+          name,
+          file,
+          folder: folderName,
+          artUrl: null,
+          artist: null,
+          duration: 0,
+          durationStr: '--:--',
+          key: folderName + '/' + fileName,
+        };
         folder.songs.push(song);
         state.allSongs.push(song);
+
+        if (state.allSongs.length % 50 === 0) {
+          dlog('Songs loaded: ' + state.allSongs.length);
+          updateLoadingText('Loading... ' + state.allSongs.length + ' songs');
+          await sleep(0);
+        }
       }
     }
 
@@ -456,19 +473,33 @@
     };
   }
 
-  // Load durations lazily in the background after initial render
+  // Load ID3 tags + durations lazily in the background after initial render
   async function loadDurationsInBackground() {
+    dlog('Background metadata loading started (' + state.allSongs.length + ' songs)');
     for (let i = 0; i < state.allSongs.length; i++) {
       const song = state.allSongs[i];
       try {
+        // ID3 parse (art + artist)
+        const id3 = await parseID3(song.file);
+        if (id3.artBlob && !song.artUrl) {
+          song.artUrl = URL.createObjectURL(id3.artBlob);
+          const artEl = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-art`);
+          const placeholderEl = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-art-placeholder`);
+          if (artEl) { artEl.src = song.artUrl; artEl.classList.remove('hidden'); }
+          if (placeholderEl) placeholderEl.remove();
+        }
+        if (id3.artist) song.artist = id3.artist;
+      } catch (e) { /* skip */ }
+      try {
+        // Duration
         song.durationStr = await getAudioDuration(song.file);
-        // Update visible element if exists
         const el = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-duration`);
         if (el) el.textContent = song.durationStr;
       } catch (e) { /* skip */ }
-      // Yield every 5 songs to keep UI responsive
-      if (i % 5 === 0) await sleep(0);
+      // Yield every 3 songs to keep UI responsive
+      if (i % 3 === 0) await sleep(0);
     }
+    dlog('Background metadata loading complete');
   }
 
   function getAudioDuration(file) {
