@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1a237e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>SoloPlayer</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Landing: Folder Select -->
+  <div id="landing" class="landing">
+    <div class="landing-content">
+      <div class="landing-icon">
+        <svg viewBox="0 0 80 80" width="80" height="80">
+          <defs>
+            <linearGradient id="noteGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#4a6cf7"/>
+              <stop offset="100%" stop-color="#7b9fff"/>
+            </linearGradient>
+          </defs>
+          <ellipse cx="30" cy="52" rx="10" ry="7" fill="url(#noteGrad)" transform="rotate(-15 30 52)"/>
+          <ellipse cx="54" cy="46" rx="10" ry="7" fill="url(#noteGrad)" transform="rotate(-15 54 46)"/>
+          <line x1="39" y1="48" x2="39" y2="20" stroke="#7b9fff" stroke-width="3"/>
+          <line x1="63" y1="42" x2="63" y2="14" stroke="#a0b8ff" stroke-width="3"/>
+          <line x1="39" y1="20" x2="63" y2="14" stroke="#4a6cf7" stroke-width="4"/>
+        </svg>
+      </div>
+      <h1 class="landing-title">SoloPlayer</h1>
+      <p class="landing-sub">Ad-free Music Player</p>
+      <button id="btnSelectFolder" class="btn-select-folder">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/>
+        </svg>
+        <span>Select Music Folder</span>
+      </button>
+      <input type="file" id="folderInput" webkitdirectory multiple hidden>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app" class="app hidden">
+    <!-- Header -->
+    <header class="header">
+      <h1 class="header-title">SoloPlayer</h1>
+      <button id="btnReload" class="header-btn" title="Reload folder">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M1 4v6h6M23 20v-6h-6"/>
+          <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="songs">Songs</button>
+      <button class="tab" data-tab="playlists">Playlists</button>
+    </nav>
+
+    <!-- Search (songs tab) -->
+    <div id="searchBar" class="search-bar">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input type="text" id="searchInput" placeholder="Search songs..." autocomplete="off">
+    </div>
+
+    <!-- Songs Tab -->
+    <div id="songsTab" class="tab-content active">
+      <div id="songList" class="song-list"></div>
+    </div>
+
+    <!-- Playlists Tab -->
+    <div id="playlistsTab" class="tab-content">
+      <div class="playlist-section">
+        <h2 class="section-title">Auto Playlists</h2>
+        <div id="autoPlaylists" class="playlist-grid"></div>
+      </div>
+      <div class="playlist-section">
+        <div class="section-header">
+          <h2 class="section-title">My Playlists</h2>
+          <button id="btnNewPlaylist" class="btn-icon" title="New playlist">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+            </svg>
+          </button>
+        </div>
+        <div id="manualPlaylists" class="playlist-grid"></div>
+      </div>
+    </div>
+
+    <!-- Playlist Detail View -->
+    <div id="playlistDetail" class="tab-content playlist-detail">
+      <div class="detail-header">
+        <button id="btnBackFromDetail" class="btn-icon">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+            <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+          </svg>
+        </button>
+        <div class="detail-info">
+          <img id="detailCover" class="detail-cover" src="" alt="">
+          <div>
+            <h2 id="detailTitle" class="detail-title"></h2>
+            <p id="detailCount" class="detail-count"></p>
+          </div>
+        </div>
+        <div id="detailActions" class="detail-actions"></div>
+      </div>
+      <div id="detailSongList" class="song-list"></div>
+    </div>
+
+    <!-- Now Playing (Full Screen) -->
+    <div id="nowPlaying" class="now-playing hidden">
+      <button id="btnCloseNP" class="np-close">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
+        </svg>
+      </button>
+      <div class="np-art-wrap">
+        <img id="npArt" class="np-art" src="" alt="">
+        <div id="npArtPlaceholder" class="np-art-placeholder">
+          <svg viewBox="0 0 80 80" width="80" height="80" opacity="0.3">
+            <ellipse cx="30" cy="52" rx="10" ry="7" fill="#4a6cf7" transform="rotate(-15 30 52)"/>
+            <ellipse cx="54" cy="46" rx="10" ry="7" fill="#7b9fff" transform="rotate(-15 54 46)"/>
+            <line x1="39" y1="48" x2="39" y2="20" stroke="#7b9fff" stroke-width="3"/>
+            <line x1="63" y1="42" x2="63" y2="14" stroke="#a0b8ff" stroke-width="3"/>
+            <line x1="39" y1="20" x2="63" y2="14" stroke="#4a6cf7" stroke-width="4"/>
+          </svg>
+        </div>
+      </div>
+      <h2 id="npTitle" class="np-title"></h2>
+      <p id="npArtist" class="np-artist"></p>
+      <div class="np-seek">
+        <span id="npCurrentTime" class="np-time">0:00</span>
+        <input type="range" id="npSeekBar" class="np-seekbar" min="0" max="100" value="0" step="0.1">
+        <span id="npDuration" class="np-time">0:00</span>
+      </div>
+      <div class="np-controls">
+        <button id="npShuffle" class="np-btn np-btn-sm" title="Shuffle">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+            <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
+          </svg>
+        </button>
+        <button id="npPrev" class="np-btn" title="Previous">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor">
+            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+          </svg>
+        </button>
+        <button id="npPlayPause" class="np-btn np-btn-play" title="Play/Pause">
+          <svg id="npPlayIcon" viewBox="0 0 24 24" width="40" height="40" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+          <svg id="npPauseIcon" viewBox="0 0 24 24" width="40" height="40" fill="currentColor" class="hidden">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+        </button>
+        <button id="npNext" class="np-btn" title="Next">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor">
+            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+          </svg>
+        </button>
+        <button id="npRepeat" class="np-btn np-btn-sm" title="Repeat">
+          <svg id="npRepeatIcon" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+            <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+          </svg>
+          <svg id="npRepeatOneIcon" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" class="hidden">
+            <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mini Player -->
+    <div id="miniPlayer" class="mini-player hidden">
+      <div id="miniProgress" class="mini-progress"></div>
+      <div class="mini-content" id="miniContent">
+        <img id="miniArt" class="mini-art" src="" alt="">
+        <div id="miniArtPlaceholder" class="mini-art-placeholder">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="#4a6cf7">
+            <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+          </svg>
+        </div>
+        <div class="mini-info">
+          <span id="miniTitle" class="mini-title">No song selected</span>
+          <span id="miniArtist" class="mini-artist"></span>
+        </div>
+        <div class="mini-controls">
+          <button id="miniPrev" class="mini-btn">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+            </svg>
+          </button>
+          <button id="miniPlayPause" class="mini-btn">
+            <svg id="miniPlayIcon" viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            <svg id="miniPauseIcon" viewBox="0 0 24 24" width="26" height="26" fill="currentColor" class="hidden">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+            </svg>
+          </button>
+          <button id="miniNext" class="mini-btn">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add to Playlist Modal -->
+    <div id="addToPlaylistModal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h3 class="modal-title">Add to Playlist</h3>
+        <div id="playlistChoices" class="playlist-choices"></div>
+        <div class="modal-actions">
+          <button id="btnCancelAdd" class="btn-modal">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- New Playlist Modal -->
+    <div id="newPlaylistModal" class="modal hidden">
+      <div class="modal-overlay"></div>
+      <div class="modal-content">
+        <h3 class="modal-title">New Playlist</h3>
+        <input type="text" id="newPlaylistName" class="modal-input" placeholder="Playlist name">
+        <div class="modal-actions">
+          <button id="btnCancelNew" class="btn-modal">Cancel</button>
+          <button id="btnCreatePlaylist" class="btn-modal btn-primary">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Song Context Menu -->
+    <div id="songContextMenu" class="context-menu hidden">
+      <button class="context-item" data-action="addToPlaylist">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+          <path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zM2 16h8v-2H2v2zm19-1h-3v3h-2v-3h-3v-2h3v-3h2v3h3v2z"/>
+        </svg>
+        Add to Playlist
+      </button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
