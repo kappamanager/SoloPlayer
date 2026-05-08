@@ -379,8 +379,23 @@
     state.allSongs = [];
     state.autoPlaylists = [];
 
+    // Get root URI first (avoids any path-encoding issues for non-ASCII paths)
+    let rootUri = null;
     try {
-      await scanNativeDir(Filesystem, path, path.split('/').pop() || path, true);
+      const ru = await Filesystem.getUri({ path, directory: 'EXTERNAL_STORAGE' });
+      rootUri = ru.uri;
+      dlog('Root URI: ' + rootUri);
+    } catch (e) {
+      dlog('getUri root failed: ' + e.message);
+    }
+
+    try {
+      const rootName = path.split('/').pop() || path;
+      if (rootUri) {
+        await scanNativeDir(Filesystem, rootUri, rootName, true, true);
+      } else {
+        await scanNativeDir(Filesystem, path, rootName, true, false);
+      }
     } catch (e) {
       dlog('Native scan ERROR: ' + e.message + '\n' + (e.stack || ''));
       hideLoading();
@@ -403,18 +418,28 @@
     loadDurationsInBackgroundNative();
   }
 
-  // Recursively scan a native directory. isRoot indicates the user-selected root.
-  async function scanNativeDir(Filesystem, path, currentFolderName, isRoot) {
-    dlog('scanNativeDir: ' + path);
+  // Recursively scan a native directory.
+  // pathOrUri: can be a relative path (with directory='EXTERNAL_STORAGE') OR a full file:// URI
+  async function scanNativeDir(Filesystem, pathOrUri, currentFolderName, isRoot, useUri) {
+    dlog('scanNativeDir: ' + pathOrUri + ' (useUri=' + !!useUri + ')');
     let result;
     try {
-      result = await Filesystem.readdir({ path, directory: 'EXTERNAL_STORAGE' });
+      const args = useUri ? { path: pathOrUri } : { path: pathOrUri, directory: 'EXTERNAL_STORAGE' };
+      result = await Filesystem.readdir(args);
     } catch (e) {
-      dlog('readdir failed for ' + path + ': ' + e.message);
+      dlog('readdir failed: ' + (e && e.message));
       throw e;
     }
     const files = result.files || [];
     dlog('  -> ' + files.length + ' entries');
+
+    // Log first 3 entries with full detail to diagnose
+    if (files.length > 0 && (isRoot || files.length < 3)) {
+      for (let i = 0; i < Math.min(3, files.length); i++) {
+        const e = files[i];
+        dlog('    [' + i + '] name=' + e.name + ' type=' + e.type + ' uri=' + (e.uri || '').slice(0, 80));
+      }
+    }
 
     const folderSongs = [];
     let coverUrl = null;
@@ -422,51 +447,53 @@
     for (const entry of files) {
       const entryName = entry.name || entry;
       const entryType = entry.type || 'file';
-      const childPath = path + '/' + entryName;
+      const entryUri = entry.uri;
 
       if (entryType === 'directory') {
-        // Recurse one level (we treat each subfolder as a section)
+        // Recurse using the URI directly (avoids path-encoding issues)
         if (isRoot) {
-          await scanNativeDir(Filesystem, childPath, entryName, false);
+          if (entryUri) {
+            await scanNativeDir(Filesystem, entryUri, entryName, false, true);
+          } else {
+            const childPath = pathOrUri + '/' + entryName;
+            await scanNativeDir(Filesystem, childPath, entryName, false, false);
+          }
         }
         continue;
       }
 
       const lower = entryName.toLowerCase();
       if (lower === 'cover.jpg') {
-        try {
-          const uri = await Filesystem.getUri({ path: childPath, directory: 'EXTERNAL_STORAGE' });
-          coverUrl = window.Capacitor.convertFileSrc(uri.uri);
-        } catch (e) { dlog('cover.jpg uri failed: ' + e.message); }
+        if (entryUri) {
+          coverUrl = window.Capacitor.convertFileSrc(entryUri);
+        }
         continue;
       }
 
       if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
-        try {
-          const uri = await Filesystem.getUri({ path: childPath, directory: 'EXTERNAL_STORAGE' });
-          const playUrl = window.Capacitor.convertFileSrc(uri.uri);
-          const name = entryName.replace(/\.(mp3|wav)$/i, '');
-          const song = {
-            name,
-            file: null,
-            nativePath: childPath,
-            playUrl,
-            folder: currentFolderName,
-            artUrl: null,
-            artist: null,
-            duration: 0,
-            durationStr: '--:--',
-            key: currentFolderName + '/' + entryName,
-          };
-          folderSongs.push(song);
-          state.allSongs.push(song);
+        if (!entryUri) { dlog('  no uri for ' + entryName); continue; }
+        const playUrl = window.Capacitor.convertFileSrc(entryUri);
+        const name = entryName.replace(/\.(mp3|wav)$/i, '');
+        const song = {
+          name,
+          file: null,
+          nativeUri: entryUri,
+          playUrl,
+          folder: currentFolderName,
+          artUrl: null,
+          artist: null,
+          duration: 0,
+          durationStr: '--:--',
+          key: currentFolderName + '/' + entryName,
+        };
+        folderSongs.push(song);
+        state.allSongs.push(song);
 
-          if (state.allSongs.length % 50 === 0) {
-            dlog('Songs found: ' + state.allSongs.length);
-            updateLoadingText('Loading... ' + state.allSongs.length + ' songs');
-            await sleep(0);
-          }
-        } catch (e) { dlog('song uri failed: ' + e.message); }
+        if (state.allSongs.length % 50 === 0) {
+          dlog('Songs found: ' + state.allSongs.length);
+          updateLoadingText('Loading... ' + state.allSongs.length + ' songs');
+          await sleep(0);
+        }
       }
     }
 
