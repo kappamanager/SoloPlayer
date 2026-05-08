@@ -1478,9 +1478,27 @@
       dlog('init ERROR: ' + e.message);
     }
 
-    // Register Service Worker
-    if ('serviceWorker' in navigator) {
+    // Register Service Worker (web only — Capacitor serves from localhost)
+    if ('serviceWorker' in navigator && !isNative) {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+
+    // Auto-resume on native if path already chosen and permission granted
+    if (isNative) {
+      const storedPath = localStorage.getItem('soloplayer:musicPath');
+      if (storedPath) {
+        let hasAccess = true;
+        try {
+          if (window.AndroidStorage && typeof window.AndroidStorage.hasAllFilesAccess === 'function') {
+            hasAccess = window.AndroidStorage.hasAllFilesAccess();
+          }
+        } catch (e) { dlog('hasAllFilesAccess check failed: ' + e.message); }
+        if (hasAccess) {
+          dlog('Auto-loading saved folder: ' + storedPath);
+          // Skip the landing screen and load straight away
+          loadFolderNative();
+        }
+      }
     }
   }
 
