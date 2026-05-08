@@ -307,7 +307,7 @@
     state.autoPlaylists.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 
     hideLoading();
-    landing.classList.add('hidden');
+    landing.classList.add('hidden'); document.body.classList.remove('on-landing');
     app.classList.remove('hidden');
     renderSongList();
     renderPlaylists();
@@ -402,7 +402,7 @@
     state.autoPlaylists.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 
     hideLoading();
-    landing.classList.add('hidden');
+    landing.classList.add('hidden'); document.body.classList.remove('on-landing');
     app.classList.remove('hidden');
     renderSongList();
     renderPlaylists();
@@ -758,20 +758,28 @@
       return;
     }
 
-    songListEl.innerHTML = songs.map((s, i) => songItemHTML(s)).join('');
+    songListEl.innerHTML = songs.map((s, i) => songItemHTML(s, i)).join('');
     updatePlayingHighlight();
   }
 
-  function songItemHTML(song) {
+  // Aurora playlist accent colors (cycled per card)
+  const PL_ACCENTS = ['#7be8ff', '#8b6cff', '#5cf2c8', '#3b8cff', '#ff6aa8'];
+  const PL_ICONS = ['♪', '◎', '✦', '☾', '↻', '♥'];
+
+  function songItemHTML(song, index) {
+    const num = String((index || 0) + 1).padStart(2, '0');
     const artHTML = song.artUrl
       ? `<img class="song-art" src="${escapeAttr(song.artUrl)}" alt="" loading="lazy">`
-      : `<div class="song-art-placeholder"><svg viewBox="0 0 24 24" width="20" height="20" fill="#4a6cf7"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>`;
+      : `<div class="song-art-placeholder"></div>`;
     return `<div class="song-item" data-key="${escapeAttr(song.key)}">
+      <div class="song-num">${num}</div>
       ${artHTML}
       <div class="song-info">
-        <div class="song-name">${escapeHTML(song.name)}</div>
-        <div class="song-duration">${song.durationStr}</div>
+        <div class="song-title">${escapeHTML(song.name)}</div>
+        <div class="song-meta">${escapeHTML(song.artist || song.folder || '')}</div>
       </div>
+      <div class="eq" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="song-dur">${song.durationStr}</div>
       <button class="song-menu-btn" data-menu-key="${escapeAttr(song.key)}">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
           <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
@@ -780,18 +788,29 @@
     </div>`;
   }
 
+  function playlistCardHTML(name, count, idx, dataAttr, accent, icon) {
+    const num = String(idx + 1).padStart(2, '0');
+    return `<div class="playlist-card" ${dataAttr} style="--c:${accent}">
+      <div class="pc-id">SP/${num}</div>
+      <div class="pc-hole"></div>
+      <div class="pc-name">${escapeHTML(name)}</div>
+      <div class="pc-bottom"></div>
+      <div class="pc-meta">${count} TRX</div>
+      <div class="pc-icon">${icon}</div>
+    </div>`;
+  }
+
   function renderPlaylists() {
     // Auto playlists
-    autoPlaylistsEl.innerHTML = state.autoPlaylists.map(pl => {
-      const artHTML = pl.coverUrl
-        ? `<img class="playlist-card-art" src="${escapeAttr(pl.coverUrl)}" alt="" loading="lazy">`
-        : `<div class="playlist-card-art-placeholder"><svg viewBox="0 0 24 24" width="32" height="32" fill="#4a6cf7"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>`;
-      return `<div class="playlist-card" data-auto="${escapeAttr(pl.name)}">
-        ${artHTML}
-        <div class="playlist-card-name">${escapeHTML(pl.name)}</div>
-        <div class="playlist-card-count">${pl.songs.length} songs</div>
-      </div>`;
-    }).join('');
+    if (state.autoPlaylists.length === 0) {
+      autoPlaylistsEl.innerHTML = '<div class="empty-state">No auto playlists</div>';
+    } else {
+      autoPlaylistsEl.innerHTML = state.autoPlaylists.map((pl, i) => {
+        const accent = PL_ACCENTS[i % PL_ACCENTS.length];
+        const icon = PL_ICONS[i % PL_ICONS.length];
+        return playlistCardHTML(pl.name, pl.songs.length, i, `data-auto="${escapeAttr(pl.name)}"`, accent, icon);
+      }).join('');
+    }
 
     // Manual playlists
     renderManualPlaylists();
@@ -802,17 +821,11 @@
       manualPlaylistsEl.innerHTML = '<div class="empty-state">No playlists yet</div>';
       return;
     }
-    manualPlaylistsEl.innerHTML = state.manualPlaylists.map(pl => {
+    manualPlaylistsEl.innerHTML = state.manualPlaylists.map((pl, i) => {
       const songs = getManualPlaylistSongs(pl);
-      const firstArt = songs.length > 0 ? songs[0].artUrl : null;
-      const artHTML = firstArt
-        ? `<img class="playlist-card-art" src="${escapeAttr(firstArt)}" alt="" loading="lazy">`
-        : `<div class="playlist-card-art-placeholder"><svg viewBox="0 0 24 24" width="32" height="32" fill="#4a6cf7"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>`;
-      return `<div class="playlist-card" data-manual="${escapeAttr(pl.id)}">
-        ${artHTML}
-        <div class="playlist-card-name">${escapeHTML(pl.name)}</div>
-        <div class="playlist-card-count">${songs.length} songs</div>
-      </div>`;
+      const accent = PL_ACCENTS[(i + 2) % PL_ACCENTS.length];
+      const icon = PL_ICONS[(i + 3) % PL_ICONS.length];
+      return playlistCardHTML(pl.name, songs.length, i + state.autoPlaylists.length, `data-manual="${escapeAttr(pl.id)}"`, accent, icon);
     }).join('');
   }
 
@@ -850,22 +863,26 @@
     detailActions.innerHTML = actionsHTML;
 
     // Song list
-    detailSongList.innerHTML = songs.map(s => {
+    detailSongList.innerHTML = songs.map((s, i) => {
       let extra = '';
       if (isManual) {
         extra = `<button class="song-menu-btn" data-remove-key="${escapeAttr(s.key)}" data-pl-id="${escapeAttr(playlistId)}" title="Remove">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="#f44"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="#ff6aa8"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>`;
       }
+      const num = String(i + 1).padStart(2, '0');
       const artHTML = s.artUrl
         ? `<img class="song-art" src="${escapeAttr(s.artUrl)}" alt="" loading="lazy">`
-        : `<div class="song-art-placeholder"><svg viewBox="0 0 24 24" width="20" height="20" fill="#4a6cf7"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg></div>`;
+        : `<div class="song-art-placeholder"></div>`;
       return `<div class="song-item" data-key="${escapeAttr(s.key)}">
+        <div class="song-num">${num}</div>
         ${artHTML}
         <div class="song-info">
-          <div class="song-name">${escapeHTML(s.name)}</div>
-          <div class="song-duration">${s.durationStr}</div>
+          <div class="song-title">${escapeHTML(s.name)}</div>
+          <div class="song-meta">${escapeHTML(s.artist || s.folder || '')}</div>
         </div>
+        <div class="eq" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="song-dur">${s.durationStr}</div>
         ${extra}
       </div>`;
     }).join('');
@@ -1054,6 +1071,9 @@
     $('miniPauseIcon').classList.toggle('hidden', !playing);
     $('npPlayIcon').classList.toggle('hidden', playing);
     $('npPauseIcon').classList.toggle('hidden', !playing);
+    // Spin mini-art only while playing
+    $('miniArt').classList.toggle('playing', playing);
+    $('miniArtPlaceholder').classList.toggle('playing', playing);
   }
 
   function updateMiniPlayer() {
@@ -1409,6 +1429,7 @@
       if (!audio.duration || seeking) return;
       const pct = (audio.currentTime / audio.duration) * 100;
       seekBar.value = pct;
+      seekBar.style.setProperty('--p', pct + '%');
       $('npCurrentTime').textContent = formatTime(audio.currentTime);
       $('npDuration').textContent = formatTime(audio.duration);
       $('miniProgress').style.width = pct + '%';
@@ -1467,6 +1488,7 @@
     dlog('init() start');
     dlog('UA: ' + navigator.userAgent);
     dlog('showDirectoryPicker: ' + !!window.showDirectoryPicker);
+    document.body.classList.add('on-landing');
     try {
       await openDB();
       dlog('IndexedDB opened');
