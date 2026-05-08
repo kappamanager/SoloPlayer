@@ -1,0 +1,28 @@
+{
+  "name": "soloplayer",
+  "version": "1.0.0",
+  "description": "Ad-free Music Player",
+  "main": "app.js",
+  "scripts": {
+    "build": "node scripts/build-www.js",
+    "sync": "npm run build && cap sync android",
+    "android": "npm run sync && cd android && ./gradlew assembleDebug"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kappamanager/SoloPlayer.git"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kappamanager/SoloPlayer/issues"
+  },
+  "homepage": "https://github.com/kappamanager/SoloPlayer#readme",
+  "dependencies": {
+    "@capacitor-community/file-opener": "^8.0.0",
+    "@capacitor/android": "^8.3.2",
+    "@capacitor/cli": "^8.3.2",
+    "@capacitor/core": "^8.3.2",
+    "@capacitor/filesystem": "^8.1.2"
+  }
+}

@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web assets and sync Capacitor
+        run: npm run sync
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: |
+          mkdir -p artifacts
+          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/SoloPlayer-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoloPlayer-APK
+          path: artifacts/SoloPlayer-debug.apk
+          retention-days: 30
+
+      - name: Create or update Release (master only)
+        if: github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: SoloPlayer Latest Build
+          body: |
+            自動ビルドAPK（最新コミット）
+
+            **インストール方法（Android）:**
+            1. `SoloPlayer-debug.apk` をスマホでダウンロード
+            2. 「不明なアプリのインストール」を許可
+            3. APKを開いてインストール
+
+            commit: ${{ github.sha }}
+          files: artifacts/SoloPlayer-debug.apk
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

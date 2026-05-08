@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SoloPlayer</string>
+    <string name="title_activity_main">SoloPlayer</string>
+    <string name="package_name">com.kappamanager.soloplayer</string>
+    <string name="custom_url_scheme">com.kappamanager.soloplayer</string>
+</resources>
