@@ -5,8 +5,33 @@
 (function () {
   'use strict';
 
-  // ---- Debug (console only) ----
-  function dlog(msg) { console.log('[SoloPlayer]', msg); }
+  // ---- Debug log (on-screen toggle: tap title 5 times) ----
+  let debugVisible = false;
+  const debugEl = document.createElement('div');
+  debugEl.id = 'debugLog';
+  debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow-y:auto;background:rgba(0,0,0,0.92);color:#0f0;font:11px/1.5 monospace;padding:8px 10px;z-index:9999;white-space:pre-wrap;display:none;';
+  document.addEventListener('DOMContentLoaded', () => document.body.appendChild(debugEl));
+  if (document.body) document.body.appendChild(debugEl);
+  function dlog(msg) {
+    const time = new Date().toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const line = `[${time}] ${msg}`;
+    if (debugEl.parentNode) {
+      debugEl.textContent += line + '\n';
+      debugEl.scrollTop = debugEl.scrollHeight;
+    }
+    console.log('[SoloPlayer]', msg);
+  }
+  function showDebug() {
+    debugVisible = true;
+    debugEl.style.display = 'block';
+  }
+
+  // ---- Capacitor detection ----
+  const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  // On native, always show debug log so we can diagnose issues
+  if (isNative) {
+    setTimeout(() => showDebug(), 500);
+  }
 
   // ---- State ----
   const state = {
@@ -240,7 +265,10 @@
   // Folder Loading
   // ============================================================
   async function loadFolder() {
-    dlog('loadFolder() called');
+    dlog('loadFolder() called, isNative=' + isNative);
+    if (isNative) {
+      return loadFolderNative();
+    }
     let rootHandle = null;
     let filesFromInput = null;
 
@@ -313,6 +341,173 @@
 
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ============================================================
+  // Native (Capacitor) Folder Loading
+  // ============================================================
+  async function loadFolderNative() {
+    dlog('loadFolderNative() start');
+    const Plugins = window.Capacitor && window.Capacitor.Plugins;
+    if (!Plugins || !Plugins.Filesystem) {
+      dlog('ERROR: Capacitor.Plugins.Filesystem not available');
+      alert('Filesystem plugin not loaded');
+      return;
+    }
+    const Filesystem = Plugins.Filesystem;
+
+    // Ask for permission
+    try {
+      dlog('Requesting permissions...');
+      const perm = await Filesystem.requestPermissions();
+      dlog('Permission result: ' + JSON.stringify(perm));
+    } catch (e) {
+      dlog('Permission request failed: ' + e.message);
+    }
+
+    // Get path - default 'Music', allow user to change
+    let storedPath = localStorage.getItem('soloplayer:musicPath');
+    let path = storedPath || prompt('音楽フォルダのパスを入力してください\n(External Storage基準, 例: Music)', 'Music');
+    if (!path) { dlog('Path cancelled'); return; }
+    path = path.replace(/^\/+|\/+$/g, '');
+    localStorage.setItem('soloplayer:musicPath', path);
+    dlog('Music path: ' + path);
+
+    showLoading('Loading music...');
+    await sleep(50);
+
+    state.allSongs = [];
+    state.autoPlaylists = [];
+
+    try {
+      await scanNativeDir(Filesystem, path, path.split('/').pop() || path, true);
+    } catch (e) {
+      dlog('Native scan ERROR: ' + e.message + '\n' + (e.stack || ''));
+      hideLoading();
+      alert('フォルダの読み込みに失敗しました:\n' + e.message);
+      return;
+    }
+
+    dlog('Native loading done. Songs: ' + state.allSongs.length + ', Playlists: ' + state.autoPlaylists.length);
+
+    state.allSongs.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+    state.autoPlaylists.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+
+    hideLoading();
+    landing.classList.add('hidden');
+    app.classList.remove('hidden');
+    renderSongList();
+    renderPlaylists();
+    dlog('UI rendered (native). Songs: ' + state.allSongs.length);
+
+    loadDurationsInBackgroundNative();
+  }
+
+  // Recursively scan a native directory. isRoot indicates the user-selected root.
+  async function scanNativeDir(Filesystem, path, currentFolderName, isRoot) {
+    dlog('scanNativeDir: ' + path);
+    let result;
+    try {
+      result = await Filesystem.readdir({ path, directory: 'EXTERNAL_STORAGE' });
+    } catch (e) {
+      dlog('readdir failed for ' + path + ': ' + e.message);
+      throw e;
+    }
+    const files = result.files || [];
+    dlog('  -> ' + files.length + ' entries');
+
+    const folderSongs = [];
+    let coverUrl = null;
+
+    for (const entry of files) {
+      const entryName = entry.name || entry;
+      const entryType = entry.type || 'file';
+      const childPath = path + '/' + entryName;
+
+      if (entryType === 'directory') {
+        // Recurse one level (we treat each subfolder as a section)
+        if (isRoot) {
+          await scanNativeDir(Filesystem, childPath, entryName, false);
+        }
+        continue;
+      }
+
+      const lower = entryName.toLowerCase();
+      if (lower === 'cover.jpg') {
+        try {
+          const uri = await Filesystem.getUri({ path: childPath, directory: 'EXTERNAL_STORAGE' });
+          coverUrl = window.Capacitor.convertFileSrc(uri.uri);
+        } catch (e) { dlog('cover.jpg uri failed: ' + e.message); }
+        continue;
+      }
+
+      if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
+        try {
+          const uri = await Filesystem.getUri({ path: childPath, directory: 'EXTERNAL_STORAGE' });
+          const playUrl = window.Capacitor.convertFileSrc(uri.uri);
+          const name = entryName.replace(/\.(mp3|wav)$/i, '');
+          const song = {
+            name,
+            file: null,
+            nativePath: childPath,
+            playUrl,
+            folder: currentFolderName,
+            artUrl: null,
+            artist: null,
+            duration: 0,
+            durationStr: '--:--',
+            key: currentFolderName + '/' + entryName,
+          };
+          folderSongs.push(song);
+          state.allSongs.push(song);
+
+          if (state.allSongs.length % 50 === 0) {
+            dlog('Songs found: ' + state.allSongs.length);
+            updateLoadingText('Loading... ' + state.allSongs.length + ' songs');
+            await sleep(0);
+          }
+        } catch (e) { dlog('song uri failed: ' + e.message); }
+      }
+    }
+
+    if (folderSongs.length > 0) {
+      if (coverUrl) {
+        for (const s of folderSongs) {
+          if (!s.artUrl) s.artUrl = coverUrl;
+        }
+      }
+      folderSongs.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+      state.autoPlaylists.push({ name: currentFolderName, coverUrl, songs: folderSongs });
+    }
+  }
+
+  // Native background duration loading (no ID3 yet — keep it simple)
+  async function loadDurationsInBackgroundNative() {
+    dlog('Native background metadata loading started');
+    for (let i = 0; i < state.allSongs.length; i++) {
+      const song = state.allSongs[i];
+      try {
+        song.durationStr = await getAudioDurationFromUrl(song.playUrl);
+        const el = document.querySelector(`[data-key="${CSS.escape(song.key)}"] .song-duration`);
+        if (el) el.textContent = song.durationStr;
+      } catch (e) { /* skip */ }
+      if (i % 3 === 0) await sleep(0);
+    }
+    dlog('Native background metadata loading complete');
+  }
+
+  function getAudioDurationFromUrl(url) {
+    return new Promise(resolve => {
+      const a = new Audio();
+      a.preload = 'metadata';
+      a.src = url;
+      a.onloadedmetadata = () => {
+        const dur = a.duration;
+        resolve(isFinite(dur) ? formatTime(dur) : '--:--');
+      };
+      a.onerror = () => resolve('--:--');
+      setTimeout(() => resolve('--:--'), 5000);
+    });
   }
 
   async function loadFromDirectoryHandle(rootHandle) {
@@ -683,8 +878,16 @@
   // ============================================================
   // Playback
   // ============================================================
+  function getSongPlaybackUrl(song) {
+    if (song.playUrl) return song.playUrl;
+    if (song.file) return URL.createObjectURL(song.file);
+    return null;
+  }
+
   function playSong(song, queue, context) {
-    if (!song || !song.file) return;
+    if (!song) return;
+    const url = getSongPlaybackUrl(song);
+    if (!url) { dlog('No playback URL for song'); return; }
 
     state.currentSong = song;
     state.playingContext = context;
@@ -698,9 +901,8 @@
 
     if (state.shuffleOn) shuffleQueue();
 
-    const url = URL.createObjectURL(song.file);
     audio.src = url;
-    audio.play().catch(() => {});
+    audio.play().catch(e => dlog('audio.play error: ' + e.message));
     state.isPlaying = true;
 
     updateMiniPlayer();
@@ -758,11 +960,12 @@
   function playSongAtIndex(idx) {
     const song = state.currentQueue[idx];
     if (!song) return;
+    const url = getSongPlaybackUrl(song);
+    if (!url) return;
     state.currentSong = song;
     state.currentIndex = idx;
-    const url = URL.createObjectURL(song.file);
     audio.src = url;
-    audio.play().catch(() => {});
+    audio.play().catch(e => dlog('audio.play error: ' + e.message));
     state.isPlaying = true;
     updateMiniPlayer();
     updateNowPlaying();
