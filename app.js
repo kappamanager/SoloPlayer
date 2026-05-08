@@ -788,15 +788,23 @@
     </div>`;
   }
 
-  function playlistCardHTML(name, count, idx, dataAttr, accent, icon) {
+  function playlistCardHTML(name, count, idx, dataAttr, accent, icon, coverUrl) {
     const num = String(idx + 1).padStart(2, '0');
+    const artHTML = coverUrl
+      ? `<img class="pc-art" src="${escapeAttr(coverUrl)}" alt="" loading="lazy">`
+      : `<div class="pc-art-placeholder"><span class="pc-glyph">${icon}</span></div>`;
     return `<div class="playlist-card" ${dataAttr} style="--c:${accent}">
-      <div class="pc-id">SP/${num}</div>
-      <div class="pc-hole"></div>
-      <div class="pc-name">${escapeHTML(name)}</div>
-      <div class="pc-bottom"></div>
-      <div class="pc-meta">${count} TRX</div>
-      <div class="pc-icon">${icon}</div>
+      <div class="pc-art-wrap">
+        ${artHTML}
+        <div class="pc-overlay">
+          <div class="pc-id">SP/${num}</div>
+          <div class="pc-hole"></div>
+        </div>
+      </div>
+      <div class="pc-info">
+        <div class="pc-name">${escapeHTML(name)}</div>
+        <div class="pc-meta">${count} TRX</div>
+      </div>
     </div>`;
   }
 
@@ -808,7 +816,9 @@
       autoPlaylistsEl.innerHTML = state.autoPlaylists.map((pl, i) => {
         const accent = PL_ACCENTS[i % PL_ACCENTS.length];
         const icon = PL_ICONS[i % PL_ICONS.length];
-        return playlistCardHTML(pl.name, pl.songs.length, i, `data-auto="${escapeAttr(pl.name)}"`, accent, icon);
+        // Use folder cover if present, else first song's art
+        const cover = pl.coverUrl || (pl.songs[0] && pl.songs[0].artUrl) || null;
+        return playlistCardHTML(pl.name, pl.songs.length, i, `data-auto="${escapeAttr(pl.name)}"`, accent, icon, cover);
       }).join('');
     }
 
@@ -825,7 +835,8 @@
       const songs = getManualPlaylistSongs(pl);
       const accent = PL_ACCENTS[(i + 2) % PL_ACCENTS.length];
       const icon = PL_ICONS[(i + 3) % PL_ICONS.length];
-      return playlistCardHTML(pl.name, songs.length, i + state.autoPlaylists.length, `data-manual="${escapeAttr(pl.id)}"`, accent, icon);
+      const cover = (songs[0] && songs[0].artUrl) || null;
+      return playlistCardHTML(pl.name, songs.length, i + state.autoPlaylists.length, `data-manual="${escapeAttr(pl.id)}"`, accent, icon, cover);
     }).join('');
   }
 
