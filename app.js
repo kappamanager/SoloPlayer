@@ -5,33 +5,11 @@
 (function () {
   'use strict';
 
-  // ---- Debug log (on-screen toggle: tap title 5 times) ----
-  let debugVisible = false;
-  const debugEl = document.createElement('div');
-  debugEl.id = 'debugLog';
-  debugEl.style.cssText = 'position:fixed;bottom:0;left:0;right:0;max-height:40vh;overflow-y:auto;background:rgba(0,0,0,0.92);color:#0f0;font:11px/1.5 monospace;padding:8px 10px;z-index:9999;white-space:pre-wrap;display:none;';
-  document.addEventListener('DOMContentLoaded', () => document.body.appendChild(debugEl));
-  if (document.body) document.body.appendChild(debugEl);
-  function dlog(msg) {
-    const time = new Date().toLocaleTimeString('ja-JP', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    const line = `[${time}] ${msg}`;
-    if (debugEl.parentNode) {
-      debugEl.textContent += line + '\n';
-      debugEl.scrollTop = debugEl.scrollHeight;
-    }
-    console.log('[SoloPlayer]', msg);
-  }
-  function showDebug() {
-    debugVisible = true;
-    debugEl.style.display = 'block';
-  }
+  // ---- Debug (console only) ----
+  function dlog(msg) { console.log('[SoloPlayer]', msg); }
 
   // ---- Capacitor detection ----
   const isNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-  // On native, always show debug log so we can diagnose issues
-  if (isNative) {
-    setTimeout(() => showDebug(), 500);
-  }
 
   // ---- State ----
   const state = {
@@ -1237,16 +1215,53 @@
     btnReload.addEventListener('click', loadFolder);
 
     // Tabs
-    document.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        const target = tab.dataset.tab;
-        songsTab.classList.toggle('active', target === 'songs');
-        playlistsTab.classList.toggle('active', target === 'playlists');
-        playlistDetail.classList.remove('active');
-        $('searchBar').classList.toggle('hidden', target !== 'songs');
+    function switchTab(target) {
+      document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tab === target);
       });
+      songsTab.classList.toggle('active', target === 'songs');
+      playlistsTab.classList.toggle('active', target === 'playlists');
+      playlistDetail.classList.remove('active');
+      $('searchBar').classList.toggle('hidden', target !== 'songs');
+    }
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+    });
+
+    // Swipe between tabs (horizontal swipe on tab content area)
+    const TABS_ORDER = ['songs', 'playlists'];
+    let touchStartX = 0, touchStartY = 0, touchTracking = false;
+    function getActiveTab() {
+      if (songsTab.classList.contains('active')) return 'songs';
+      if (playlistsTab.classList.contains('active')) return 'playlists';
+      return null;
+    }
+    function onTouchStart(e) {
+      // Only handle when on a top-level tab (not detail view)
+      if (playlistDetail.classList.contains('active')) { touchTracking = false; return; }
+      if (e.touches.length !== 1) { touchTracking = false; return; }
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      touchTracking = true;
+    }
+    function onTouchEnd(e) {
+      if (!touchTracking) return;
+      touchTracking = false;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - touchStartX;
+      const dy = t.clientY - touchStartY;
+      // Require horizontal swipe: |dx| > 60 and dominant horizontal direction
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      const current = getActiveTab();
+      if (!current) return;
+      const idx = TABS_ORDER.indexOf(current);
+      const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+      if (nextIdx < 0 || nextIdx >= TABS_ORDER.length) return;
+      switchTab(TABS_ORDER[nextIdx]);
+    }
+    [songsTab, playlistsTab].forEach(el => {
+      el.addEventListener('touchstart', onTouchStart, { passive: true });
+      el.addEventListener('touchend', onTouchEnd, { passive: true });
     });
 
     // Search
