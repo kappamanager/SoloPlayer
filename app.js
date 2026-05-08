@@ -356,7 +356,22 @@
     }
     const Filesystem = Plugins.Filesystem;
 
-    // Ask for permission
+    // Check All Files Access (MANAGE_EXTERNAL_STORAGE)
+    if (window.AndroidStorage) {
+      try {
+        const hasAccess = window.AndroidStorage.hasAllFilesAccess();
+        dlog('AllFilesAccess: ' + hasAccess);
+        if (!hasAccess) {
+          const ok = confirm('このアプリは音楽フォルダを読み込むために「すべてのファイルへのアクセス」が必要です。\n\nOKを押すと設定画面が開きます。\n「すべてのファイルへのアクセスを許可」をオンにしてからアプリに戻ってきてください。');
+          if (ok) {
+            window.AndroidStorage.openAllFilesAccessSettings();
+          }
+          return;
+        }
+      } catch (e) { dlog('AndroidStorage check failed: ' + e.message); }
+    }
+
+    // Ask for traditional storage permissions too
     try {
       dlog('Requesting permissions...');
       const perm = await Filesystem.requestPermissions();
