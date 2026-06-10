@@ -868,6 +868,7 @@
 
     // Actions
     let actionsHTML = `<button class="btn-action" data-detail-action="playAll">Play All</button>`;
+    actionsHTML += `<button class="btn-action accent" data-detail-action="shuffle">Shuffle</button>`;
     if (isManual) {
       actionsHTML += `<button class="btn-action danger" data-detail-action="delete" data-pl-id="${escapeAttr(playlistId)}">Delete</button>`;
     }
@@ -984,7 +985,7 @@
     let next = state.currentIndex + 1;
     if (next >= state.currentQueue.length) {
       if (state.repeatMode === 1) next = 0;
-      else { audio.pause(); state.isPlaying = false; updatePlayPauseIcons(); return; }
+      else { audio.pause(); state.isPlaying = false; updatePlayPauseIcons(); nativePlayback.stop(); return; }
     }
     state.currentIndex = next;
     playSongAtIndex(next);
@@ -1033,6 +1034,17 @@
     }
     state.currentQueue = [current, ...others];
     state.currentIndex = 0;
+  }
+
+  // Start shuffle playback for a given song list/context (entry point used by
+  // the "Shuffle All" button and per-playlist "Shuffle" button).
+  function shufflePlay(songs, context) {
+    if (!songs || songs.length === 0) return;
+    state.shuffleOn = true;
+    updateShuffleIcon();
+    const start = songs[Math.floor(Math.random() * songs.length)];
+    // playSong() reshuffles the queue (current song first) because shuffleOn is set.
+    playSong(start, songs, context);
   }
 
   function toggleShuffle() {
@@ -1245,6 +1257,11 @@
     btnSelectFolder.addEventListener('click', loadFolder);
     btnReload.addEventListener('click', loadFolder);
 
+    // Shuffle all songs
+    $('btnShuffleAll').addEventListener('click', () => {
+      shufflePlay(state.allSongs, { type: 'all' });
+    });
+
     // Tabs
     function switchTab(target) {
       document.querySelectorAll('.tab').forEach(t => {
@@ -1349,6 +1366,11 @@
         if (songs && songs.length > 0) {
           playSong(songs[0], songs, playlistDetail._context);
         }
+      } else if (action === 'shuffle') {
+        const songs = playlistDetail._songs;
+        if (songs && songs.length > 0) {
+          shufflePlay(songs, playlistDetail._context);
+        }
       } else if (action === 'delete') {
         deleteManualPlaylist(btn.dataset.plId);
         hidePlaylistDetail();
@@ -1444,11 +1466,31 @@
       $('npCurrentTime').textContent = formatTime(audio.currentTime);
       $('npDuration').textContent = formatTime(audio.duration);
       $('miniProgress').style.width = pct + '%';
+      // Keep the lock-screen / notification scrubber in sync.
+      if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession && isFinite(audio.duration)) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: audio.duration,
+            playbackRate: audio.playbackRate || 1,
+            position: Math.min(audio.currentTime, audio.duration),
+          });
+        } catch (e) { /* ignore */ }
+      }
     });
 
     audio.addEventListener('ended', () => playNext());
-    audio.addEventListener('play', () => { state.isPlaying = true; updatePlayPauseIcons(); });
-    audio.addEventListener('pause', () => { state.isPlaying = false; updatePlayPauseIcons(); });
+    audio.addEventListener('play', () => {
+      state.isPlaying = true;
+      updatePlayPauseIcons();
+      setMediaPlaybackState(true);
+      nativePlayback.sync(true);
+    });
+    audio.addEventListener('pause', () => {
+      state.isPlaying = false;
+      updatePlayPauseIcons();
+      setMediaPlaybackState(false);
+      nativePlayback.sync(false);
+    });
 
     // Context menu
     document.addEventListener('click', () => {
@@ -1490,6 +1532,55 @@
   }
   function escapeAttr(s) {
     return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ============================================================
+  // Native background playback bridge (Android foreground service)
+  // ============================================================
+  // Keeps a foreground service + notification alive while music plays so the
+  // OS doesn't kill the WebView process in the background.
+  const nativePlayback = {
+    started: false,
+    sync(playing) {
+      if (!isNative || !window.AndroidPlayback) return;
+      const s = state.currentSong;
+      if (!s) return;
+      const title = s.name || 'SoloPlayer';
+      const artist = s.artist || s.folder || '';
+      try {
+        if (!this.started) {
+          // Don't spin up the service just to report a paused state.
+          if (!playing) return;
+          if (typeof window.AndroidPlayback.requestNotificationPermission === 'function') {
+            window.AndroidPlayback.requestNotificationPermission();
+          }
+          window.AndroidPlayback.start(title, artist, true);
+          this.started = true;
+        } else {
+          window.AndroidPlayback.update(title, artist, playing);
+        }
+      } catch (e) { dlog('nativePlayback.sync error: ' + e.message); }
+    },
+    stop() {
+      if (!isNative || !window.AndroidPlayback) return;
+      try { window.AndroidPlayback.stop(); } catch (e) { /* ignore */ }
+      this.started = false;
+    },
+  };
+
+  // Handle media-control actions coming from the native notification buttons.
+  window.SoloPlayerNative = {
+    onAction(action) {
+      if (action === 'next') playNext();
+      else if (action === 'prev') playPrev();
+      else if (action === 'playpause') togglePlayPause();
+    },
+  };
+
+  function setMediaPlaybackState(playing) {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    }
   }
 
   // ============================================================
