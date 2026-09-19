@@ -188,6 +188,10 @@ body.on-landing .aurora-field { animation: drift 22s ease-in-out infinite altern
   cursor: pointer; transition: background 120ms;
 }
 .header-btn:active { background: rgba(123,232,255,0.12); }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.settings-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.settings-options .btn-modal { width: 100%; text-align: center; }
+.settings-hint { color: var(--ink-d2); font-size: 12px; line-height: 1.5; margin: 0 0 14px; }
 
 /* Tabs */
 .tabs {

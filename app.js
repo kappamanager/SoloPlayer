@@ -28,6 +28,27 @@
 
   const audio = new Audio();
   audio.preload = 'metadata';
+  const documentRequests = new Map();
+  let documentRequestId = 0;
+  let folderSelectionResolve = null;
+  let libraryLoading = false;
+  const navigationHistory = [];
+
+  function selectNativeFolder() {
+    if (!window.AndroidFolders || folderSelectionResolve) return Promise.resolve(null);
+    return new Promise(resolve => {
+      folderSelectionResolve = resolve;
+      window.AndroidFolders.chooseFolder(localStorage.getItem('soloplayer:treeUri') || '');
+    });
+  }
+
+  function listDocuments(treeUri, parentId = '') {
+    return new Promise((resolve, reject) => {
+      const id = ++documentRequestId;
+      documentRequests.set(id, { resolve, reject });
+      window.AndroidFolders.listDocuments(treeUri, parentId, id);
+    });
+  }
 
   // ---- DOM refs ----
   const $ = id => document.getElementById(id);
@@ -324,77 +345,82 @@
   // ============================================================
   // Native (Capacitor) Folder Loading
   // ============================================================
-  async function loadFolderNative() {
+  async function loadFolderNative({ change = false, usePath = false } = {}) {
+    if (libraryLoading) return;
     dlog('loadFolderNative() start');
     const Plugins = window.Capacitor && window.Capacitor.Plugins;
-    if (!Plugins || !Plugins.Filesystem) {
-      dlog('ERROR: Capacitor.Plugins.Filesystem not available');
-      alert('Filesystem plugin not loaded');
-      return;
+    const Filesystem = Plugins && Plugins.Filesystem;
+    const storedTree = localStorage.getItem('soloplayer:treeUri');
+    const storedPath = localStorage.getItem('soloplayer:musicPath');
+    let treeUri = null;
+    let path = null;
+    if (usePath || (!change && !storedTree && storedPath)) {
+      if (!Filesystem) { alert('Filesystem plugin not loaded'); return; }
+      if (window.AndroidStorage && !window.AndroidStorage.hasAllFilesAccess()) {
+        const ok = confirm('パス指定には「すべてのファイルへのアクセス」が必要です。設定画面を開きますか？');
+        if (ok) window.AndroidStorage.openAllFilesAccessSettings();
+        return;
+      }
+      path = usePath
+        ? prompt('音楽フォルダのパス (端末ストレージ基準。例: 音楽 / Music / Download)', storedPath || '音楽')
+        : storedPath;
+      if (path == null || !path.trim()) return;
+      path = path.trim().replace(/^\/+|\/+$/g, '');
+      try { await Filesystem.requestPermissions(); } catch (e) { dlog('Permission request: ' + e.message); }
+    } else {
+      if (!window.AndroidFolders) { alert('Android folder picker is unavailable'); return; }
+      treeUri = change || !storedTree ? await selectNativeFolder() : storedTree;
+      if (!treeUri) return; // Cancel leaves the existing library untouched.
     }
-    const Filesystem = Plugins.Filesystem;
-
-    // Check All Files Access (MANAGE_EXTERNAL_STORAGE)
-    if (window.AndroidStorage) {
-      try {
-        const hasAccess = window.AndroidStorage.hasAllFilesAccess();
-        dlog('AllFilesAccess: ' + hasAccess);
-        if (!hasAccess) {
-          const ok = confirm('このアプリは音楽フォルダを読み込むために「すべてのファイルへのアクセス」が必要です。\n\nOKを押すと設定画面が開きます。\n「すべてのファイルへのアクセスを許可」をオンにしてからアプリに戻ってきてください。');
-          if (ok) {
-            window.AndroidStorage.openAllFilesAccessSettings();
-          }
-          return;
-        }
-      } catch (e) { dlog('AndroidStorage check failed: ' + e.message); }
-    }
-
-    // Ask for traditional storage permissions too
-    try {
-      dlog('Requesting permissions...');
-      const perm = await Filesystem.requestPermissions();
-      dlog('Permission result: ' + JSON.stringify(perm));
-    } catch (e) {
-      dlog('Permission request failed: ' + e.message);
-    }
-
-    // Get path - default 'Music', allow user to change
-    let storedPath = localStorage.getItem('soloplayer:musicPath');
-    let path = storedPath || prompt('音楽フォルダのパスを入力してください\n(External Storage基準, 例: Music)', 'Music');
-    if (!path) { dlog('Path cancelled'); return; }
-    path = path.replace(/^\/+|\/+$/g, '');
-    localStorage.setItem('soloplayer:musicPath', path);
-    dlog('Music path: ' + path);
 
     showLoading('Loading music...');
     await sleep(50);
-
+    libraryLoading = true;
+    const previousSongs = state.allSongs;
+    const previousPlaylists = state.autoPlaylists;
     state.allSongs = [];
     state.autoPlaylists = [];
-
-    // Get root URI first (avoids any path-encoding issues for non-ASCII paths)
-    let rootUri = null;
     try {
-      const ru = await Filesystem.getUri({ path, directory: 'EXTERNAL_STORAGE' });
-      rootUri = ru.uri;
-      dlog('Root URI: ' + rootUri);
-    } catch (e) {
-      dlog('getUri root failed: ' + e.message);
-    }
-
-    try {
-      const rootName = path.split('/').pop() || path;
-      if (rootUri) {
-        await scanNativeDir(Filesystem, rootUri, rootName, true, true);
+      if (treeUri) {
+        await scanDocumentTree(treeUri);
       } else {
-        await scanNativeDir(Filesystem, path, rootName, true, false);
+        let rootUri = null;
+        try {
+          const ru = await Filesystem.getUri({ path, directory: 'EXTERNAL_STORAGE' });
+          rootUri = ru.uri;
+        } catch (e) { dlog('getUri root failed: ' + e.message); }
+        const rootName = path.split('/').pop() || path;
+        if (rootUri) await scanNativeDir(Filesystem, rootUri, rootName, true, true);
+        else await scanNativeDir(Filesystem, path, rootName, true, false);
       }
+      if (state.allSongs.length === 0) throw new Error('対応する MP3/WAV が見つかりませんでした。');
     } catch (e) {
       dlog('Native scan ERROR: ' + e.message + '\n' + (e.stack || ''));
+      state.allSongs = previousSongs;
+      state.autoPlaylists = previousPlaylists;
+      if (treeUri && treeUri !== storedTree) window.AndroidFolders.releaseFolder(treeUri);
       hideLoading();
+      libraryLoading = false;
       alert('フォルダの読み込みに失敗しました:\n' + e.message);
       return;
     }
+    // Commit the new library only after a successful scan.
+    resetPlaybackForNewLibrary(previousSongs);
+    if (treeUri) {
+      localStorage.setItem('soloplayer:treeUri', treeUri);
+      localStorage.removeItem('soloplayer:musicPath');
+    } else {
+      localStorage.setItem('soloplayer:musicPath', path);
+      localStorage.removeItem('soloplayer:treeUri');
+    }
+    if ((storedTree || storedPath) && (treeUri !== storedTree || path !== storedPath)) {
+      // Keep playlist names, but not keys pointing into the previous library.
+      for (const playlist of state.manualPlaylists) {
+        playlist.songKeys = [];
+        dbPut('playlists', playlist);
+      }
+    }
+    if (storedTree && storedTree !== treeUri) window.AndroidFolders.releaseFolder(storedTree);
 
     dlog('Native loading done. Songs: ' + state.allSongs.length + ', Playlists: ' + state.autoPlaylists.length);
 
@@ -407,8 +433,66 @@
     renderSongList();
     renderPlaylists();
     dlog('UI rendered (native). Songs: ' + state.allSongs.length);
-
+    libraryLoading = false;
     loadDurationsInBackgroundNative();
+  }
+
+  function resetPlaybackForNewLibrary(previousSongs) {
+    state.currentSong = null;
+    state.currentQueue = [];
+    state.currentIndex = -1;
+    state.playingContext = null;
+    state.isPlaying = false;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+    nativePlayback.stop();
+    const urls = new Set(previousSongs.flatMap(s => [s.playUrl, s.artUrl]).filter(u => u && u.startsWith('blob:')));
+    urls.forEach(u => URL.revokeObjectURL(u));
+    miniPlayer.classList.add('hidden');
+    nowPlayingEl.classList.add('hidden');
+    playlistDetail.classList.remove('active');
+    playlistDetail._songs = null;
+    navigationHistory.length = 0;
+    showScreen('songs', false);
+    searchInput.value = '';
+    updatePlayPauseIcons();
+    saveSettings();
+  }
+
+  async function scanDocumentTree(treeUri) {
+    const scan = async (parentId, folderName, isRoot) => {
+      const entries = await listDocuments(treeUri, parentId);
+      const folderSongs = [];
+      let coverUrl = null;
+      for (const entry of entries) {
+        dlog('Document: ' + JSON.stringify(entry));
+        if (entry.directory) {
+          if (isRoot) await scan(entry.id, entry.name, false);
+          continue;
+        }
+        const lower = entry.name.toLowerCase();
+        if (lower === 'cover.jpg') {
+          coverUrl = window.Capacitor.convertFileSrc(entry.uri);
+        } else if (lower.endsWith('.mp3') || lower.endsWith('.wav')) {
+          const song = {
+            name: entry.name.replace(/\.(mp3|wav)$/i, ''), file: null,
+            nativeUri: entry.uri, playUrl: window.Capacitor.convertFileSrc(entry.uri),
+            folder: folderName, artUrl: null, artist: null,
+            duration: 0, durationStr: '--:--', key: folderName + '/' + entry.name,
+          };
+          folderSongs.push(song);
+          state.allSongs.push(song);
+        }
+        if (state.allSongs.length && state.allSongs.length % 50 === 0) await sleep(0);
+      }
+      if (folderSongs.length) {
+        for (const song of folderSongs) song.artUrl = coverUrl;
+        folderSongs.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        state.autoPlaylists.push({ name: folderName, coverUrl, songs: folderSongs });
+      }
+    };
+    await scan('', '音楽', true);
   }
 
   // Recursively scan a native directory.
@@ -439,10 +523,17 @@
 
     for (const entry of files) {
       const entryName = entry.name || entry;
-      const entryType = entry.type || 'file';
+      const entryType = entry.type || 'unknown';
       const entryUri = entry.uri;
-
-      if (entryType === 'directory') {
+      // Capacitor may report an accessible directory with an unexpected type.
+      // Verify the underlying URI rather than assuming a music-note icon is a file.
+      const isDirectory = entryType === 'directory' ||
+        (isRoot && entryUri && window.AndroidFolders &&
+          !/\.(mp3|wav|jpe?g|png)$/i.test(entryName) &&
+          window.AndroidFolders.isDirectory(entryUri));
+      dlog('Entry: name=' + entryName + ' type=' + entryType + ' uri=' + entryUri
+        + ' directory=' + !!isDirectory);
+      if (isDirectory) {
         // Recurse using the URI directly (avoids path-encoding issues)
         if (isRoot) {
           if (entryUri) {
@@ -846,6 +937,44 @@
       .filter(Boolean);
   }
 
+  function currentScreen() {
+    if (playlistDetail.classList.contains('active')) return 'detail';
+    if (playlistsTab.classList.contains('active')) return 'playlists';
+    return 'songs';
+  }
+
+  function showScreen(target, record = true) {
+    const previous = currentScreen();
+    if (record && previous !== target) navigationHistory.push(previous);
+    document.querySelectorAll('.tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.tab === (target === 'detail' ? 'playlists' : target)));
+    songsTab.classList.toggle('active', target === 'songs');
+    playlistsTab.classList.toggle('active', target === 'playlists');
+    playlistDetail.classList.toggle('active', target === 'detail');
+    $('searchBar').classList.toggle('hidden', target !== 'songs');
+  }
+
+  function navigateBack() {
+    for (const id of ['settingsModal', 'newPlaylistModal', 'addToPlaylistModal']) {
+      const modal = $(id);
+      if (!modal.classList.contains('hidden')) { modal.classList.add('hidden'); return true; }
+    }
+    if (!nowPlayingEl.classList.contains('hidden')) {
+      nowPlayingEl.classList.add('hidden');
+      return true;
+    }
+    if (navigationHistory.length) {
+      const target = navigationHistory.pop();
+      showScreen(target === 'detail' && !playlistDetail._songs ? 'playlists' : target, false);
+      return true;
+    }
+    if (playlistDetail.classList.contains('active')) {
+      showScreen('playlists', false);
+      return true;
+    }
+    return false;
+  }
+
   function showPlaylistDetail(songs, title, coverUrl, isManual, playlistId) {
     const detailTitle = $('detailTitle');
     const detailCount = $('detailCount');
@@ -905,17 +1034,12 @@
       ? { type: 'manual', id: playlistId }
       : { type: 'auto', name: title };
 
-    songsTab.classList.remove('active');
-    playlistsTab.classList.remove('active');
-    playlistDetail.classList.add('active');
-    $('searchBar').classList.add('hidden');
+    showScreen('detail');
     updatePlayingHighlight();
   }
 
   function hidePlaylistDetail() {
-    playlistDetail.classList.remove('active');
-    playlistsTab.classList.add('active');
-    $('searchBar').classList.add('hidden');
+    navigateBack();
   }
 
   function updatePlayingHighlight() {
@@ -1256,6 +1380,20 @@
     // Folder selection
     btnSelectFolder.addEventListener('click', loadFolder);
     btnReload.addEventListener('click', loadFolder);
+    $('btnSettings').addEventListener('click', () => {
+      $('btnChangeFolderPath').classList.toggle('hidden', !isNative);
+      $('settingsModal').classList.remove('hidden');
+    });
+    $('btnCloseSettings').addEventListener('click', () => $('settingsModal').classList.add('hidden'));
+    $('btnChangeFolder').addEventListener('click', () => {
+      $('settingsModal').classList.add('hidden');
+      if (isNative) loadFolderNative({ change: true });
+      else loadFolder();
+    });
+    $('btnChangeFolderPath').addEventListener('click', () => {
+      $('settingsModal').classList.add('hidden');
+      loadFolderNative({ change: true, usePath: true });
+    });
 
     // Shuffle all songs
     $('btnShuffleAll').addEventListener('click', () => {
@@ -1263,17 +1401,8 @@
     });
 
     // Tabs
-    function switchTab(target) {
-      document.querySelectorAll('.tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.tab === target);
-      });
-      songsTab.classList.toggle('active', target === 'songs');
-      playlistsTab.classList.toggle('active', target === 'playlists');
-      playlistDetail.classList.remove('active');
-      $('searchBar').classList.toggle('hidden', target !== 'songs');
-    }
     document.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+      tab.addEventListener('click', () => showScreen(tab.dataset.tab));
     });
 
     // Swipe between tabs (horizontal swipe on tab content area)
@@ -1305,7 +1434,7 @@
       const idx = TABS_ORDER.indexOf(current);
       const nextIdx = dx < 0 ? idx + 1 : idx - 1;
       if (nextIdx < 0 || nextIdx >= TABS_ORDER.length) return;
-      switchTab(TABS_ORDER[nextIdx]);
+      showScreen(TABS_ORDER[nextIdx]);
     }
     [songsTab, playlistsTab].forEach(el => {
       el.addEventListener('touchstart', onTouchStart, { passive: true });
@@ -1574,6 +1703,26 @@
       if (action === 'next') playNext();
       else if (action === 'prev') playPrev();
       else if (action === 'playpause') togglePlayPause();
+      else if (action === 'play' && audio.paused) togglePlayPause();
+      else if (action === 'pause' && !audio.paused) togglePlayPause();
+    },
+    onBack() {
+      return navigateBack();
+    },
+    onFolderSelected(uri) {
+      const resolve = folderSelectionResolve;
+      folderSelectionResolve = null;
+      if (resolve) resolve(uri);
+    },
+    onFolderEntries(requestId, json) {
+      const request = documentRequests.get(requestId);
+      if (!request) return;
+      documentRequests.delete(requestId);
+      try {
+        const result = JSON.parse(json);
+        if (result.error) request.reject(new Error(result.error));
+        else request.resolve(result.entries);
+      } catch (e) { request.reject(e); }
     },
   };
 
@@ -1610,15 +1759,16 @@
     // Auto-resume on native if path already chosen and permission granted
     if (isNative) {
       const storedPath = localStorage.getItem('soloplayer:musicPath');
-      if (storedPath) {
+      const storedTree = localStorage.getItem('soloplayer:treeUri');
+      if (storedTree || storedPath) {
         let hasAccess = true;
         try {
-          if (window.AndroidStorage && typeof window.AndroidStorage.hasAllFilesAccess === 'function') {
+          if (!storedTree && window.AndroidStorage && typeof window.AndroidStorage.hasAllFilesAccess === 'function') {
             hasAccess = window.AndroidStorage.hasAllFilesAccess();
           }
         } catch (e) { dlog('hasAllFilesAccess check failed: ' + e.message); }
         if (hasAccess) {
-          dlog('Auto-loading saved folder: ' + storedPath);
+          dlog('Auto-loading saved folder: ' + (storedTree || storedPath));
           // Skip the landing screen and load straight away
           loadFolderNative();
         }
