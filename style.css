@@ -241,9 +241,9 @@ body.on-landing .aurora-field { animation: drift 22s ease-in-out infinite altern
 .tab-content.active { display: block; }
 
 /* ───────────── List toolbar (Shuffle All) ───────────── */
-.list-toolbar { padding: 0 18px 10px; }
+.list-toolbar { padding: 0 18px 10px; display: flex; gap: 8px; }
 .btn-shuffle-all {
-  appearance: none; width: 100%;
+  appearance: none; flex: 1; min-width: 0;
   display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 10px 14px;
   background: linear-gradient(90deg, rgba(123,232,255,0.12), rgba(139,108,255,0.12));
@@ -254,6 +254,18 @@ body.on-landing .aurora-field { animation: drift 22s ease-in-out infinite altern
 }
 .btn-shuffle-all:active { background: rgba(123,232,255,0.20); border-color: var(--ice); }
 .btn-shuffle-all svg { flex-shrink: 0; }
+.btn-repeat {
+  appearance: none; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--line-2); border-radius: 6px;
+  color: var(--ink-d); cursor: pointer;
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.12em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.btn-repeat.active { color: var(--ice); border-color: var(--ice); box-shadow: 0 0 8px var(--glow); }
+.btn-repeat svg { flex-shrink: 0; }
 
 /* ───────────── Song list ───────────── */
 .song-list { padding: 0 0 8px; }
@@ -482,7 +494,7 @@ body.on-landing .aurora-field { animation: drift 22s ease-in-out infinite altern
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .detail-count { font-family: var(--f-mono); font-size: 10px; color: var(--ink-d); margin: 4px 0 0; letter-spacing: 0.1em; text-transform: uppercase; }
-.detail-actions { display: flex; gap: 6px; width: 100%; padding-top: 4px; }
+.detail-actions { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; padding-top: 4px; }
 .detail-actions .btn-action {
   appearance: none; border: 1px solid var(--line-2); border-radius: 4px;
   background: rgba(255,255,255,0.04); color: var(--ink);
@@ -492,6 +504,8 @@ body.on-landing .aurora-field { animation: drift 22s ease-in-out infinite altern
 }
 .detail-actions .btn-action:active { background: rgba(123,232,255,0.10); border-color: var(--ice); color: var(--ice); }
 .detail-actions .btn-action.accent { color: var(--ice); border-color: var(--line-2); background: rgba(123,232,255,0.08); }
+.detail-actions .btn-action.repeat-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-d); }
+.detail-actions .btn-action.repeat-toggle.active { color: var(--ice); border-color: var(--ice); }
 .detail-actions .btn-action.danger { color: var(--hot); border-color: rgba(255,106,168,0.3); }
 
 /* ───────────── Now Playing ───────────── */

@@ -439,9 +439,12 @@
     state.currentIndex = -1;
     state.playingContext = null;
     state.isPlaying = false;
+    playbackLoadToken++; // drop any in-flight track load
+    playbackLoading = false;
     audio.pause();
     audio.removeAttribute('src');
     audio.load();
+    releasePlaybackUrl();
     nativePlayback.stop();
     const urls = new Set(previousSongs.flatMap(s => [s.playUrl, s.artUrl]).filter(u => u && u.startsWith('blob:')));
     urls.forEach(u => URL.revokeObjectURL(u));
@@ -849,6 +852,10 @@
     updatePlayingHighlight();
   }
 
+  // Repeat / repeat-one icon paths (same as the Now Playing buttons)
+  const REPEAT_PATH = 'M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z';
+  const REPEAT_ONE_PATH = REPEAT_PATH + 'm-4-2V9h-1l-2 1v1h1.5v4H13z';
+
   // Aurora playlist accent colors (cycled per card)
   const PL_ACCENTS = ['#7be8ff', '#8b6cff', '#5cf2c8', '#3b8cff', '#ff6aa8'];
   const PL_ICONS = ['♪', '◎', '✦', '☾', '↻', '♥'];
@@ -994,6 +1001,11 @@
     // Actions
     let actionsHTML = `<button class="btn-action" data-detail-action="playAll">Play All</button>`;
     actionsHTML += `<button class="btn-action accent" data-detail-action="shuffle">Shuffle</button>`;
+    actionsHTML += `<button class="btn-action repeat-toggle" data-detail-action="repeat" title="Repeat">
+      <svg class="ri-all" viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="${REPEAT_PATH}"/></svg>
+      <svg class="ri-one hidden" viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="${REPEAT_ONE_PATH}"/></svg>
+      <span class="repeat-label"></span>
+    </button>`;
     if (isManual) {
       actionsHTML += `<button class="btn-action danger" data-detail-action="delete" data-pl-id="${escapeAttr(playlistId)}">Delete</button>`;
     }
@@ -1032,6 +1044,7 @@
 
     showScreen('detail');
     updatePlayingHighlight();
+    updateRepeatIcon();
   }
 
   function hidePlaylistDetail() {
@@ -1047,16 +1060,70 @@
   // ============================================================
   // Playback
   // ============================================================
-  function getSongPlaybackUrl(song) {
-    if (song.playUrl) return song.playUrl;
-    if (song.file) return URL.createObjectURL(song.file);
-    return null;
+  // Native songs are served by Capacitor's local server, which answers Range
+  // requests with bytes from the start of the file whatever offset was asked
+  // for. When the WebView re-reads a song it has partly cached (repeat wrapping
+  // to the first track, seeking) it decodes the wrong bytes and playback stops
+  // silently. So each native song is read once in full (no Range header) and
+  // played from a blob: URL, which seeks correctly.
+  let currentPlaybackUrl = null; // blob: URL currently owned by the audio element
+  let playbackLoadToken = 0;     // bumps on every new track; stale loads are dropped
+  let playbackLoading = false;
+
+  function releasePlaybackUrl() {
+    if (currentPlaybackUrl) URL.revokeObjectURL(currentPlaybackUrl);
+    currentPlaybackUrl = null;
+  }
+
+  async function loadNativeBlobUrl(song) {
+    // CapacitorHttp replaces window.fetch with a native proxy that cannot reach
+    // the in-app local server; CapacitorWebFetch is the WebView's own fetch.
+    const webFetch = window.CapacitorWebFetch || window.fetch;
+    if (typeof webFetch !== 'function') throw new Error('fetch unavailable');
+    const res = await webFetch.call(window, song.playUrl);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return URL.createObjectURL(await res.blob());
+  }
+
+  function setAudioSource(url, owned) {
+    const previous = currentPlaybackUrl;
+    audio.src = url;
+    currentPlaybackUrl = owned ? url : null;
+    if (previous && previous !== url) URL.revokeObjectURL(previous);
+    if (state.isPlaying) audio.play().catch(e => dlog('audio.play error: ' + e.message));
+  }
+
+  // Load `song` into the audio element and play it if playback is wanted
+  // (state.isPlaying). Native songs load asynchronously.
+  function startAudio(song) {
+    const token = ++playbackLoadToken;
+    if (song.file) {
+      // Web: a local File becomes a blob URL synchronously (keeps the user gesture).
+      playbackLoading = false;
+      setAudioSource(URL.createObjectURL(song.file), true);
+      return;
+    }
+    playbackLoading = true;
+    loadNativeBlobUrl(song)
+      .then(url => {
+        if (token !== playbackLoadToken) { URL.revokeObjectURL(url); return; }
+        setAudioSource(url, true);
+      })
+      .catch(e => {
+        if (token !== playbackLoadToken) return;
+        dlog('Full read failed, streaming directly: ' + e.message);
+        setAudioSource(song.playUrl, false);
+      })
+      .finally(() => { if (token === playbackLoadToken) playbackLoading = false; });
+  }
+
+  function hasPlayableSource(song) {
+    return !!(song && (song.file || song.playUrl));
   }
 
   function playSong(song, queue, context) {
     if (!song) return;
-    const url = getSongPlaybackUrl(song);
-    if (!url) { dlog('No playback URL for song'); return; }
+    if (!hasPlayableSource(song)) { dlog('No playback URL for song'); return; }
 
     state.currentSong = song;
     state.playingContext = context;
@@ -1070,9 +1137,8 @@
 
     if (state.shuffleOn) shuffleQueue();
 
-    audio.src = url;
-    audio.play().catch(e => dlog('audio.play error: ' + e.message));
     state.isPlaying = true;
+    startAudio(song);
 
     updateMiniPlayer();
     updateNowPlaying();
@@ -1085,6 +1151,13 @@
 
   function togglePlayPause() {
     if (!state.currentSong) return;
+    if (playbackLoading) {
+      // Next track is still being read: flip the intent; setAudioSource() honours it.
+      state.isPlaying = !state.isPlaying;
+      if (!state.isPlaying && !audio.paused) audio.pause();
+      updatePlayPauseIcons();
+      return;
+    }
     if (audio.paused) {
       audio.play().catch(() => {});
       state.isPlaying = true;
@@ -1095,19 +1168,27 @@
     updatePlayPauseIcons();
   }
 
-  function playNext() {
+  // fromEnded: the current track finished on its own. Repeat-one only replays
+  // in that case; a manual "next" (buttons, notification, headset) advances.
+  function playNext(fromEnded = false) {
     if (state.currentQueue.length === 0) return;
-    if (state.repeatMode === 2) {
+    if (fromEnded && state.repeatMode === 2) {
       audio.currentTime = 0;
-      audio.play().catch(() => {});
+      audio.play().catch(e => dlog('audio.play error: ' + e.message));
       return;
     }
     let next = state.currentIndex + 1;
     if (next >= state.currentQueue.length) {
-      if (state.repeatMode === 1) next = 0;
-      else { audio.pause(); state.isPlaying = false; updatePlayPauseIcons(); nativePlayback.stop(); return; }
+      if (state.repeatMode !== 0) next = 0;
+      else {
+        audio.pause();
+        state.isPlaying = false;
+        updatePlayPauseIcons();
+        setMediaPlaybackState(false);
+        nativePlayback.stop();
+        return;
+      }
     }
-    state.currentIndex = next;
     playSongAtIndex(next);
   }
 
@@ -1119,23 +1200,19 @@
     }
     let prev = state.currentIndex - 1;
     if (prev < 0) {
-      if (state.repeatMode === 1) prev = state.currentQueue.length - 1;
+      if (state.repeatMode !== 0) prev = state.currentQueue.length - 1;
       else prev = 0;
     }
-    state.currentIndex = prev;
     playSongAtIndex(prev);
   }
 
   function playSongAtIndex(idx) {
     const song = state.currentQueue[idx];
-    if (!song) return;
-    const url = getSongPlaybackUrl(song);
-    if (!url) return;
+    if (!hasPlayableSource(song)) return;
     state.currentSong = song;
     state.currentIndex = idx;
-    audio.src = url;
-    audio.play().catch(e => dlog('audio.play error: ' + e.message));
     state.isPlaying = true;
+    startAudio(song);
     updateMiniPlayer();
     updateNowPlaying();
     updatePlayPauseIcons();
@@ -1255,11 +1332,21 @@
     $('npShuffle').classList.toggle('active', state.shuffleOn);
   }
 
+  const REPEAT_LABELS = ['Repeat Off', 'Repeat All', 'Repeat One'];
+
   function updateRepeatIcon() {
+    const mode = state.repeatMode;
     const btn = $('npRepeat');
-    btn.classList.toggle('active', state.repeatMode > 0);
-    $('npRepeatIcon').classList.toggle('hidden', state.repeatMode === 2);
-    $('npRepeatOneIcon').classList.toggle('hidden', state.repeatMode !== 2);
+    btn.classList.toggle('active', mode > 0);
+    $('npRepeatIcon').classList.toggle('hidden', mode === 2);
+    $('npRepeatOneIcon').classList.toggle('hidden', mode !== 2);
+    // Repeat buttons on the list screens (Songs toolbar, playlist detail)
+    document.querySelectorAll('.repeat-toggle').forEach(el => {
+      el.classList.toggle('active', mode > 0);
+      el.querySelector('.ri-all').classList.toggle('hidden', mode === 2);
+      el.querySelector('.ri-one').classList.toggle('hidden', mode !== 2);
+      el.querySelector('.repeat-label').textContent = REPEAT_LABELS[mode];
+    });
   }
 
   function updateMediaSession() {
@@ -1395,6 +1482,7 @@
     $('btnShuffleAll').addEventListener('click', () => {
       shufflePlay(state.allSongs, { type: 'all' });
     });
+    $('btnRepeatSongs').addEventListener('click', toggleRepeat);
 
     // Tabs
     document.querySelectorAll('.tab').forEach(tab => {
@@ -1496,6 +1584,8 @@
         if (songs && songs.length > 0) {
           shufflePlay(songs, playlistDetail._context);
         }
+      } else if (action === 'repeat') {
+        toggleRepeat();
       } else if (action === 'delete') {
         deleteManualPlaylist(btn.dataset.plId);
         hidePlaylistDetail();
@@ -1566,7 +1656,7 @@
     $('btnCloseNP').addEventListener('click', () => nowPlayingEl.classList.add('hidden'));
     $('npPlayPause').addEventListener('click', togglePlayPause);
     $('npPrev').addEventListener('click', playPrev);
-    $('npNext').addEventListener('click', playNext);
+    $('npNext').addEventListener('click', () => playNext());
     $('npShuffle').addEventListener('click', toggleShuffle);
     $('npRepeat').addEventListener('click', toggleRepeat);
 
@@ -1603,7 +1693,7 @@
       }
     });
 
-    audio.addEventListener('ended', () => playNext());
+    audio.addEventListener('ended', () => playNext(true));
     audio.addEventListener('play', () => {
       state.isPlaying = true;
       updatePlayPauseIcons();
@@ -1611,10 +1701,34 @@
       nativePlayback.sync(true);
     });
     audio.addEventListener('pause', () => {
+      // A natural end also fires 'pause' (just before 'ended'). Keep reporting
+      // "playing" so the native service keeps its wake lock while the next track
+      // loads; playNext() handles the real stop at the end of the queue.
+      if (audio.ended) return;
       state.isPlaying = false;
       updatePlayPauseIcons();
       setMediaPlaybackState(false);
       nativePlayback.sync(false);
+    });
+
+    // An unplayable track used to stop playback without any sign. Log it and
+    // move on; give up once every track in the queue has failed in a row.
+    let consecutiveErrors = 0;
+    audio.addEventListener('playing', () => { consecutiveErrors = 0; });
+    audio.addEventListener('error', () => {
+      if (!state.currentSong || !audio.src) return;
+      const err = audio.error;
+      dlog('Audio error ' + (err ? err.code + ' ' + (err.message || '') : '?') + ' on ' + state.currentSong.key);
+      consecutiveErrors++;
+      if (consecutiveErrors >= state.currentQueue.length) {
+        consecutiveErrors = 0;
+        state.isPlaying = false;
+        updatePlayPauseIcons();
+        setMediaPlaybackState(false);
+        nativePlayback.stop();
+        return;
+      }
+      playNext();
     });
 
     // Context menu
@@ -1699,8 +1813,8 @@
       if (action === 'next') playNext();
       else if (action === 'prev') playPrev();
       else if (action === 'playpause') togglePlayPause();
-      else if (action === 'play' && audio.paused) togglePlayPause();
-      else if (action === 'pause' && !audio.paused) togglePlayPause();
+      else if (action === 'play' && !state.isPlaying) togglePlayPause();
+      else if (action === 'pause' && state.isPlaying) togglePlayPause();
     },
     onBack() {
       return navigateBack();
@@ -1742,6 +1856,8 @@
       await loadManualPlaylists();
       await loadSettings();
       setupEvents();
+      updateShuffleIcon();
+      updateRepeatIcon(); // reflect the saved mode on the list-screen buttons
       dlog('init() done, ready');
     } catch (e) {
       dlog('init ERROR: ' + e.message);
