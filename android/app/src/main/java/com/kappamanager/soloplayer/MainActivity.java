@@ -14,6 +14,7 @@ import android.provider.Settings;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
@@ -38,6 +39,7 @@ public class MainActivity extends BridgeActivity {
         bridge.getWebView().addJavascriptInterface(new StorageBridge(), "AndroidStorage");
         bridge.getWebView().addJavascriptInterface(new PlaybackBridge(), "AndroidPlayback");
         bridge.getWebView().addJavascriptInterface(new FolderBridge(), "AndroidFolders");
+        getOnBackPressedDispatcher().addCallback(this, backCallback);
     }
 
     @Override
@@ -64,15 +66,22 @@ public class MainActivity extends BridgeActivity {
             "window.SoloPlayerNative && window.SoloPlayerNative." + method + "(" + jsonArgument + ")", null));
     }
 
-    @Override
-    public void onBackPressed() {
-        // Return to Android only when SoloPlayer has no in-app screen to dismiss.
-        bridge.getWebView().evaluateJavascript(
-            "!!(window.SoloPlayerNative && window.SoloPlayerNative.onBack())",
-            handled -> {
-                if (!"true".equals(handled)) MainActivity.super.onBackPressed();
-            });
-    }
+    // Back is routed through OnBackPressedDispatcher: with targetSdk 36 on
+    // Android 16+, Activity.onBackPressed() is no longer called by the system.
+    private final OnBackPressedCallback backCallback = new OnBackPressedCallback(true) {
+        @Override
+        public void handleOnBackPressed() {
+            // Return to Android only when SoloPlayer has no in-app screen to dismiss.
+            bridge.getWebView().evaluateJavascript(
+                "!!(window.SoloPlayerNative && window.SoloPlayerNative.onBack())",
+                handled -> {
+                    if ("true".equals(handled)) return;
+                    setEnabled(false);
+                    getOnBackPressedDispatcher().onBackPressed();
+                    setEnabled(true);
+                });
+        }
+    };
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {

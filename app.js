@@ -413,13 +413,9 @@
       localStorage.setItem('soloplayer:musicPath', path);
       localStorage.removeItem('soloplayer:treeUri');
     }
-    if ((storedTree || storedPath) && (treeUri !== storedTree || path !== storedPath)) {
-      // Keep playlist names, but not keys pointing into the previous library.
-      for (const playlist of state.manualPlaylists) {
-        playlist.songKeys = [];
-        dbPut('playlists', playlist);
-      }
-    }
+    // Manual playlists keep their song keys across folder changes: keys are
+    // folder-relative ("folder/file"), and songs missing from the new library
+    // are simply skipped by getManualPlaylistSongs().
     if (storedTree && storedTree !== treeUri) window.AndroidFolders.releaseFolder(storedTree);
 
     dlog('Native loading done. Songs: ' + state.allSongs.length + ', Playlists: ' + state.autoPlaylists.length);
